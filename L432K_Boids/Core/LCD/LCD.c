@@ -48,7 +48,7 @@ static struct
 	uint8_t				displayOn : 1;
 	uint8_t				needDisplayOnOffCommand : 1;
 
-} lcdData;// __attribute__ ((section (".xbss")));
+} lcdData __attribute__ ((section (".xbss")));
 
 void LCD_DisplayOn( void )
 {

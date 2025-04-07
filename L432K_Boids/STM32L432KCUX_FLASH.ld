@@ -45,8 +45,8 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 /* Memories definition */
 MEMORY
 {
-  RAM    (xrw)    : ORIGIN = 0x20000000,   LENGTH = 48K
-  RAM2    (xrw)    : ORIGIN = 0x10000000,   LENGTH = 16K
+  RAM2    (xrw)    : ORIGIN = 0x20000000,   LENGTH = 48K
+  RAM    (xrw)    : ORIGIN = 0x10000000,   LENGTH = 16K
   FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 256K
 }
 
@@ -176,6 +176,16 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >RAM
+
+ /* Uninitialized data section into "RAM" Ram type memory */
+  . = ALIGN(4);
+  .xbss :
+  {
+    /* This is used by the startup in order to initialize the .bss section */
+    *(.xbss)
+    *(.xbss*)
+  } >RAM2
+
 
   /* Remove information from the compiler libraries */
   /DISCARD/ :

@@ -22,15 +22,17 @@
 extern SPI_HandleTypeDef hspi1;
 extern DMA_HandleTypeDef hdma_spi1_tx;
 
+#define _GPIO_Pin_HI(port,pin)	((port)->BSRR=(pin))
+#define _GPIO_Pin_LO(port,pin)	((port)->BRR=(pin))
 
-#define _LCD_Mode_Command	HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_RESET)
-#define _LCD_Mode_Data		HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_SET)
+#define _LCD_Mode_Command	_GPIO_Pin_LO(LCD_DC_GPIO_Port,LCD_DC_Pin)
+#define _LCD_Mode_Data		_GPIO_Pin_HI(LCD_DC_GPIO_Port,LCD_DC_Pin)
 
-#define _LCD_RST_Active		HAL_GPIO_WritePin( LCD_RST_GPIO_Port, LCD_RST_Pin, GPIO_PIN_RESET )
-#define _LCD_RST_Inactive	HAL_GPIO_WritePin( LCD_RST_GPIO_Port, LCD_RST_Pin, GPIO_PIN_SET )
+#define _LCD_RST_Active		_GPIO_Pin_LO(LCD_RST_GPIO_Port,LCD_RST_Pin)
+#define _LCD_RST_Inactive	_GPIO_Pin_HI(LCD_RST_GPIO_Port,LCD_RST_Pin)
 
-#define _LCD_CS_Active		HAL_GPIO_WritePin(LCD_CS_GPIO_Port, LCD_CS_Pin, GPIO_PIN_RESET)
-#define _LCD_CS_Inactive	HAL_GPIO_WritePin(LCD_CS_GPIO_Port, LCD_CS_Pin, GPIO_PIN_SET)
+#define _LCD_CS_Active		_GPIO_Pin_LO(LCD_CS_GPIO_Port,LCD_CS_Pin)
+#define _LCD_CS_Inactive	_GPIO_Pin_HI(LCD_CS_GPIO_Port,LCD_CS_Pin)
 
 #define _LCD_NumBands		1		// to split frame buffer writes across interrupts
 
@@ -107,10 +109,10 @@ static inline uint8_t SPI_IsBusy( SPI_HandleTypeDef *hspi )
 		   (hspi->Instance->SR & SPI_SR_BSY)
 		   ? 1 : 0;
 }
-#define SPI_IS_BUSY(SPIx) (((SPIx)->SR & (SPI_SR_TXE | SPI_SR_RXNE)) == 0 || ((SPIx)->SR & SPI_SR_BSY))
-#define SPI_WAIT(SPIx)            while (SPI_IS_BUSY((SPIx)->Instance))
-#define SPI_WAIT2(SPIx)		while ((SPIx)->Instance->SR & (SPI_SR_TXE | SPI_SR_RXNE))
-#define _Use_SPI_WAIT		1
+
+
+#define SPI_WAIT_SR_EMPTY(SPIx)		while ( ((SPIx)->Instance->SR & (SPI_SR_BSY))){}	// wait for shift register empty
+#define SPI_WAIT_TX_EMPTY(SPIx)		while (!((SPIx)->Instance->SR & (SPI_SR_TXE))){}	// wait for tx register empty
 
 int LCD_GetTick( void ) { return lcdData.tickCounter; }
 
@@ -118,18 +120,11 @@ void LCD_DMATxComplete( void )
 {
 	if ( lcdData.dmaActive )
 	{
-#if _Use_SPI_WAIT
-		SPI_WAIT(&hspi1);
-#else
-		while ( !__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_TXE) || __HAL_SPI_GET_FLAG(&hspi1, SPI_SR_BSY) );
-		_LCD_Mode_Data;
-		_LCD_Mode_Data;
-		_LCD_Mode_Data;
-#endif
-
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);			// PB3 to time the display
+		SPI_WAIT_SR_EMPTY(&hspi1);
 
 		_LCD_CS_Inactive;
+
+		_GPIO_Pin_LO(GPIOB, GPIO_PIN_3);			// PB3 to time the display
 
 		if ( ++lcdData.tickCounter >= _LCD_NumBands )
 		{
@@ -157,7 +152,7 @@ void LCD_DMATxAbort( void )
 
 
 
-void SPI_DMATransmitCplt(DMA_HandleTypeDef *hdma);
+static void SPI_DMATransmitCplt(DMA_HandleTypeDef *hdma);
 typedef struct
 {
 	__IO uint32_t ISR;   /*!< DMA interrupt status register */
@@ -173,14 +168,7 @@ static void writeCommand( uint8_t byte )
 	// send command byte to SPI data reg
     *((__IO uint8_t *)&hspi1.Instance->DR) = byte;
 
-#if _Use_SPI_WAIT
-	SPI_WAIT(&hspi1);
-#else
-	while ( !__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_TXE) || __HAL_SPI_GET_FLAG(&hspi1, SPI_SR_BSY) );
-	_LCD_Mode_Command;
-	_LCD_Mode_Command;
-	_LCD_Mode_Command;
-#endif
+    SPI_WAIT_SR_EMPTY(&hspi1);
 
 	_LCD_CS_Inactive;
 }
@@ -192,96 +180,55 @@ static void writeData( uint8_t byte )
 	// send command byte to SPI data reg
     *((__IO uint8_t *)&hspi1.Instance->DR) = byte;
 
-#if _Use_SPI_WAIT
-	SPI_WAIT(&hspi1);
-#else
-	while ( !__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_TXE) || __HAL_SPI_GET_FLAG(&hspi1, SPI_SR_BSY) );
-	_LCD_Mode_Data;
-	_LCD_Mode_Data;
-	_LCD_Mode_Data;
-#endif
+    SPI_WAIT_SR_EMPTY(&hspi1);
 
 	_LCD_CS_Inactive;
 }
 static void SendPacket( uint8_t cmdByte, void *ptr, uint16_t len )
 	{
+	// wait for previous command's data to be shifted out before flipping D/*C pin
+	SPI_WAIT_SR_EMPTY(&hspi1);
+
 	_LCD_Mode_Command;
 
 	// send command byte to SPI data reg
     *((__IO uint8_t *)&hspi1.Instance->DR) = cmdByte;
 
-#if _Use_SPI_WAIT
-	SPI_WAIT(&hspi1);
-#else
-	while ( !__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_TXE) || __HAL_SPI_GET_FLAG(&hspi1, SPI_SR_BSY) );
-	// to take some time, since the data might not have left the
-	// TX shift register yet
-	_LCD_Mode_Command;
-	_LCD_Mode_Command;
-	_LCD_Mode_Command;
-#endif
+	lcdData.dmaActive = 1;
+
+#if 0
+	SPI_WAIT_SR_EMPTY(&hspi1);
 
 	// Set to 'data' mode...
 	_LCD_Mode_Data;
 
-	lcdData.dmaActive = 1;
-
 	HAL_SPI_Transmit_DMA( &hspi1, ptr, len );
 
-#if 0
+#else
 
-    // command byte is going out while we set up DMA for the actual frame
-    // buffer data...
+    // command byte still being shifted out while we set up DMA
 
-	/* Set the transaction information */
-	hspi1.State       = HAL_SPI_STATE_BUSY_TX;
-	hspi1.ErrorCode   = HAL_SPI_ERROR_NONE;
-	hspi1.pTxBuffPtr  = (uint8_t *)ptr;
-	hspi1.TxXferSize  = len;
-	hspi1.TxXferCount = len;
+	__HAL_DMA_DISABLE(hspi1.hdmatx);
 
-	/* Init field not used in handle to zero */
-	hspi1.pRxBuffPtr  = (uint8_t *)NULL;
-	hspi1.TxISR       = NULL;
-	hspi1.RxISR       = NULL;
-	hspi1.RxXferSize  = 0U;
-	hspi1.RxXferCount = 0U;
+	// set bytes to write
+	hspi1.hdmatx->Instance->CNDTR = len;
 
-	hspi1.hdmatx->XferCpltCallback = SPI_DMATransmitCplt;
+	// set source address
+	hspi1.hdmatx->Instance->CMAR = (uint32_t)ptr;
 
-	/* Initialize the error code */
-	hspi1.hdmatx->ErrorCode = HAL_DMA_ERROR_NONE;
+	// Enable the TxCplt and Error ints
+	__HAL_DMA_ENABLE_IT(hspi1.hdmatx, (DMA_IT_TC | DMA_IT_TE));
 
-	/* Clear DBM bit */
-	hspi1.hdmatx->Instance->CR &= (uint32_t)(~DMA_SxCR_DBM);
-	/* Configure DMA Stream data length */
-	hspi1.hdmatx->Instance->NDTR = len;
-	/* Configure DMA Stream destination address */
-	hspi1.hdmatx->Instance->PAR = (uint32_t)&hspi1.Instance->DR;
-	/* Configure DMA Stream source address */
-	hspi1.hdmatx->Instance->M0AR = (uint32_t)ptr;
+	// wait for transmitter empty before enabling DMA
+	SPI_WAIT_TX_EMPTY(&hspi1);
 
-	/* Clear all interrupt flags at correct offset within the register */
-	((DMA_Base_Registers *)hspi1.hdmatx->StreamBaseAddress)->IFCR = 0x3FU << hspi1.hdmatx->StreamIndex;
+	// enable DMA
+	__HAL_DMA_ENABLE(hspi1.hdmatx);
 
-	/* Enable Common interrupts*/
-	hspi1.hdmatx->Instance->CR  |= DMA_IT_TC;
-//	hspi1.hdmatx->Instance->CR  |= DMA_IT_TC | DMA_IT_TE | DMA_IT_DME;
-//	hspi1.hdmatx->Instance->FCR |= DMA_IT_FE;
-
-	/* Enable the Peripheral */
-	hspi1.hdmatx->Instance->CR |=  DMA_SxCR_EN;
-
-    // since we're not receiving, need to clear the rx overrun flag
-    __HAL_SPI_CLEAR_OVRFLAG(&hspi1);
-
-	/* Enable the SPI Error Interrupt Bit */
-	SET_BIT(hspi1.Instance->CR2, SPI_CR2_ERRIE);
-
-	// command byte is long gone. Set to 'data' mode...
+	// back to data mode
 	_LCD_Mode_Data;
 
-	/* Enable Tx DMA Request */
+	// enable the DMA request
 	SET_BIT(hspi1.Instance->CR2, SPI_CR2_TXDMAEN);
 #endif
 	}
@@ -321,50 +268,23 @@ uint8_t LCD_WriteFrameBuffer( void )
 	{
 		*((__IO uint8_t *)&hspi1.Instance->DR) = lcdData.displayOn ? SSD1351_CMD_DISPLAYON : SSD1351_CMD_DISPLAYOFF;
 
-#if _Use_SPI_WAIT
-		SPI_WAIT(&hspi1);
-#else
-		while ( !__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_TXE) || __HAL_SPI_GET_FLAG(&hspi1, SPI_SR_BSY) );
-		_LCD_Mode_Command;
-		_LCD_Mode_Command;
-		_LCD_Mode_Command;
-#endif
+		SPI_WAIT_SR_EMPTY(&hspi1);
 
 		lcdData.needDisplayOnOffCommand = 0;
 	}
 
 	*((__IO uint8_t *)&hspi1.Instance->DR) = SSD1351_CMD_SETROW;
 
-#if _Use_SPI_WAIT
-	SPI_WAIT(&hspi1);
-#else
-	while ( !__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_TXE) || __HAL_SPI_GET_FLAG(&hspi1, SPI_SR_BSY) );
-	_LCD_Mode_Command;
-	_LCD_Mode_Command;
-	_LCD_Mode_Command;
-#endif
+	SPI_WAIT_SR_EMPTY(&hspi1);
 
 	_LCD_Mode_Data;
 
 	*((__IO uint8_t *)&hspi1.Instance->DR) = (lcdData.tickCounter * (_LCD_VPixels / _LCD_NumBands));
-#if _Use_SPI_WAIT
-	SPI_WAIT(&hspi1);
-#else
-	while ( !__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_TXE) || __HAL_SPI_GET_FLAG(&hspi1, SPI_SR_BSY) );
-#endif
 
-	*((__IO uint8_t *)&hspi1.Instance->DR) = 127;
-#if _Use_SPI_WAIT
-	SPI_WAIT(&hspi1);
-#else
-	while ( !__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_TXE) || __HAL_SPI_GET_FLAG(&hspi1, SPI_SR_BSY) );
-
-	_LCD_Mode_Data;
-	_LCD_Mode_Data;
-	_LCD_Mode_Data;
-#endif
+	*((__IO uint8_t *)&hspi1.Instance->DR) = (_LCD_HPixels-1);
 
     uint16_t ptrOffset = lcdData.tickCounter * (_LCD_VPixels / _LCD_NumBands) * 2 * _LCD_HPixels;
+
 	SendPacket( SSD1351_CMD_WRITERAM, (uint8_t *)lcdData.pixelBuffer + ptrOffset, sizeof(lcdData.pixelBuffer)/_LCD_NumBands );
 
 	return 1;
@@ -380,6 +300,48 @@ void LCD_DisableUpdates( void )
 	lcdData.updatesEnabled = 0;
 }
 
+#if 1
+static void SPI_DMATransmitCplt(DMA_HandleTypeDef *hdma)
+{
+  SPI_HandleTypeDef *hspi = (SPI_HandleTypeDef *)(((DMA_HandleTypeDef *)hdma)->Parent);
+
+  /* DMA Normal Mode */
+  if ((hdma->Instance->CCR & DMA_CCR_CIRC) != DMA_CCR_CIRC)
+  {
+    /* Disable ERR interrupt */
+    __HAL_SPI_DISABLE_IT(hspi, SPI_IT_ERR);
+
+    /* Disable Tx DMA Request */
+    CLEAR_BIT(hspi->Instance->CR2, SPI_CR2_TXDMAEN);
+
+    /* Clear overrun flag in 2 Lines communication mode because received data is not read */
+    if (hspi->Init.Direction == SPI_DIRECTION_2LINES)
+    {
+      __HAL_SPI_CLEAR_OVRFLAG(hspi);
+    }
+
+    hspi->TxXferCount = 0U;
+    hspi->State = HAL_SPI_STATE_READY;
+
+    if (hspi->ErrorCode != HAL_SPI_ERROR_NONE)
+    {
+      /* Call user error callback */
+#if (USE_HAL_SPI_REGISTER_CALLBACKS == 1U)
+      hspi->ErrorCallback(hspi);
+#else
+      HAL_SPI_ErrorCallback(hspi);
+#endif /* USE_HAL_SPI_REGISTER_CALLBACKS */
+      return;
+    }
+  }
+  /* Call user Tx complete callback */
+#if (USE_HAL_SPI_REGISTER_CALLBACKS == 1U)
+  hspi->TxCpltCallback(hspi);
+#else
+  HAL_SPI_TxCpltCallback(hspi);
+#endif /* USE_HAL_SPI_REGISTER_CALLBACKS */
+}
+#endif
 void LCD_Init( _eLCDDriver driver )
 	{
 	memset( &lcdData, 0, sizeof(lcdData) );
@@ -405,6 +367,31 @@ void LCD_Init( _eLCDDriver driver )
 
 	lcdData.tickCounter = 0;
 	lcdData.updatesEnabled = 1;
+
+	  /* Init field not used in handle to zero */
+	  hspi1.pRxBuffPtr  = (uint8_t *)NULL;
+	  hspi1.TxISR       = NULL;
+	  hspi1.RxISR       = NULL;
+	  hspi1.RxXferSize  = 0U;
+	  hspi1.RxXferCount = 0U;
+
+
+	  /* Set the SPI TxDMA transfer complete callback */
+	  hspi1.hdmatx->XferCpltCallback = SPI_DMATransmitCplt;
+
+	  /* Set the SPI TxDMA Half transfer complete callback */
+	  hspi1.hdmatx->XferHalfCpltCallback = NULL;
+
+	  /* Set the DMA error callback */
+	  hspi1.hdmatx->XferErrorCallback = NULL;
+
+	  /* Set the DMA AbortCpltCallback */
+	  hspi1.hdmatx->XferAbortCallback = NULL;
+
+		hspi1.hdmatx->DmaBaseAddress->IFCR = (DMA_ISR_GIF1 << (hspi1.hdmatx->ChannelIndex & 0x1CU));
+
+		/* Configure DMA Channel destination address */
+		hspi1.hdmatx->Instance->CPAR = (uint32_t)&hspi1.Instance->DR;
 	}
 
 void LCD_InitRegs( unsigned char doClear )

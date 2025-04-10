@@ -5,7 +5,7 @@
   * Description        : Code for freertos applications
   ******************************************************************************
   * @attention
-  *
+  *m
   * Copyright (c) 2024 STMicroelectronics.
   * All rights reserved.
   *
@@ -84,8 +84,12 @@ extern RNG_HandleTypeDef hrng;
 #define _ShowStats	1
 
 
+char TestResult[80];
 
-
+extern UART_HandleTypeDef huart2;
+void UART_SendStr(char *string) {
+	HAL_UART_Transmit(&huart2, (uint8_t *) string, (uint16_t) strlen(string), 200);
+}
 
 
 /* USER CODE END PD */
@@ -128,7 +132,7 @@ const osEventFlagsAttr_t sync_event_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-void memset_w( void *dst, uint8_t val, uint16_t len );
+void doclear( void *dst, uint8_t val, uint16_t len );
 void memset_16( void *dst, uint16_t val, uint16_t len );
 void memmove_w( void *dst, void *src, uint16_t len );
 
@@ -226,6 +230,9 @@ void main_task(void *argument)
 	char tbuff[12];
 
 	extern TIM_HandleTypeDef htim7;
+
+	uint32_t display_timeout = 0;
+	bool display_on = true;
 
 	elapsedTicks = 0;
 	curTick = lastTick = osKernelGetTickCount();
@@ -346,6 +353,10 @@ void main_task(void *argument)
 
 		curTick = osKernelGetTickCount();
 		elapsedTicks += curTick - lastTick;
+
+		if ( display_on )
+			display_timeout += curTick - lastTick;
+
 		lastTick = curTick;
 		static uint8_t lastSS = 0xFF;
 		uint8_t SS, MM;
@@ -362,6 +373,20 @@ void main_task(void *argument)
 		_gl_DrawString( GL_PixelsX-80, GL_PixelsY-8, tbuff, &FONT_FixedSys_8x8, GL_BLUE, GL_BLUE );
 #endif
 #endif
+
+		GPIO_PinState btn3 = HAL_GPIO_ReadPin( BUTTON_1_GPIO_Port, BUTTON_1_Pin );
+		if ( display_on && display_timeout >= 60000 )
+		{
+			LCD_DisplayOff();
+			display_on = false;
+		}
+		else
+		if ( !display_on && btn3 == GPIO_PIN_RESET )
+		{
+			LCD_DisplayOn();
+			display_on = true;
+			display_timeout = 0;
+		}
 
 		// force display update
 		LCD_SetBandMask( 0x1 );
@@ -415,8 +440,7 @@ void BreakHere( void )
 	BreakCounter++;
 }
 
-
-void memset_w( void *dst, uint8_t val, uint16_t len )
+void doclear( void *dst, uint8_t val, uint16_t len )
 {
 	uint32_t *ptr_w = dst;
 	uint16_t len_w = len / 4;
@@ -561,10 +585,10 @@ void InitBoids( void )
 #endif
 
 #if _TestBoids
-		boids[i].vel_new.x = 0.0f;		boids[i].vel_old.x = boids[i].vel_new.x;
-		boids[i].vel_new.y = 0.0f;		boids[i].vel_old.y = boids[i].vel_new.y;
-		boids[i].pos_new.x = Window.y;	boids[i].pos_old.x = boids[i].pos_new.x;
-		boids[i].pos_new.y = Window.y;	boids[i].pos_old.y = boids[i].pos_new.y;
+		boids[i].vel_old.x = boids[i].vel_new.x = 0.0f;
+		boids[i].vel_old.y = boids[i].vel_new.y = 0.0f;
+		boids[i].pos_old.x = boids[i].pos_new.x = Window.y;// + (float32_t)i;
+		boids[i].pos_old.y = boids[i].pos_new.y = Window.y;// + (float32_t)i;
 #else
 		// first, give them all random positions within the Window area
 		float32_t random_x = ((float32_t)hrand() / (float32_t)RAND_MAX) * (Window.y - Window.x);
@@ -771,6 +795,12 @@ uint32_t TestBoids( void )
 	}
 	avgmicro = totalTicks / _MaxTestLoops;
 
+#if 0
+	sprintf( TestResult, "%ld %ld %ld", minTicks, maxTicks, avgmicro );
+
+	// let timer 1 run (1ms timer)
+	htim1.Instance->CR1 |= 1;
+#endif
 	return avgmicro;
 }
 #endif

@@ -44,6 +44,8 @@ static struct
 
 	uint32_t			bandUpdateMask;
 
+	void				(*callback)( uint32_t arg );
+
 	uint8_t				updatesEnabled : 1;
 	uint8_t				dmaActive : 1;
 	uint8_t				lcdBusy : 1;
@@ -124,7 +126,7 @@ void LCD_DMATxComplete( void )
 
 		_LCD_CS_Inactive;
 
-		_GPIO_Pin_LO(GPIOB, GPIO_PIN_3);			// PB3 to time the display
+	//	_GPIO_Pin_LO(GPIOB, GPIO_PIN_3);			// PB3 to time the display
 
 		if ( ++lcdData.tickCounter >= _LCD_NumBands )
 		{
@@ -132,7 +134,11 @@ void LCD_DMATxComplete( void )
 		}
 
 		lcdData.dmaActive = 0;
-		osEventFlagsSet( sync_eventHandle, EVENT_FLAG_LCD_DMA_COMPLETE );
+
+		if ( lcdData.callback != NULL )
+		{
+			lcdData.callback( LCD_CallbackReason_DMAComplete );
+		}
 	}
 
 	lcdData.lcdBusy = false;
@@ -342,9 +348,11 @@ static void SPI_DMATransmitCplt(DMA_HandleTypeDef *hdma)
 #endif /* USE_HAL_SPI_REGISTER_CALLBACKS */
 }
 #endif
-void LCD_Init( _eLCDDriver driver )
+void LCD_Init( void (*eventCallback)(uint32_t arg), _eLCDDriver driver )
 	{
 	memset( &lcdData, 0, sizeof(lcdData) );
+
+	lcdData.callback = eventCallback;
 
 	_LCD_CS_Inactive;
 	uint8_t c = 0xCA;

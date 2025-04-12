@@ -68,7 +68,7 @@ uint8_t LCD_WriteFrameBuffer( void );
 uint16_t *LCD_GetPixelBuffer( uint8_t row );
 void LCD_SetBandMask( uint32_t mask );
 int LCD_GetTick( void );
-void LCD_Init( _eLCDDriver driver );
+void LCD_Init( void (*eventCallback)(uint32_t arg), _eLCDDriver driver );
 void LCD_InitRegs( unsigned char doClear );
 
 bool LCD_IsBusy( void );
@@ -91,6 +91,8 @@ void LCD_Scroll1( uint8_t startRow );
 //		Most of these are used internally by the library, but might
 //		be useful to user code, especially if the user is defining
 //		their own frame buffer, etc..
+#define LCD_CallbackReason_DMAComplete	1
+
 #define GL_PixelsX			_LCD_HPixels
 #define GL_PixelsY			_LCD_VPixels
 #define	GL_BytesPerLine		GL_PixelsX

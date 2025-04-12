@@ -140,6 +140,8 @@ void InitBoids( void );
 void MoveBoids( void );
 void DrawBoids( void );
 
+void LCD_Callback( uint32_t arg );
+
 void requestSPI(uint8_t fastSPI);
 void releaseSPI(void);
 
@@ -216,7 +218,7 @@ void main_task(void *argument)
 
 	requestSPI( 1 );
 
-	LCD_Init( _LCDDriver_SSD1351 );
+	LCD_Init( LCD_Callback, _LCDDriver_SSD1351 );
 	_gl_iInitialize();
 	LCD_EnableUpdates();
 
@@ -288,7 +290,7 @@ void main_task(void *argument)
 		}
 		while ( !(flags & EVENT_FLAG_LCD_DMA_COMPLETE) );
 
-	//	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);			// PB3 to time the display
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);			// PB3 to time the display
 
 
 
@@ -305,9 +307,11 @@ void main_task(void *argument)
 #if _TearTest
 		static uint8_t col=0;
 		uint8_t row;
+		uint16_t *pix_ptr = (uint16_t *)_gl_cpCurrentFrameBuffer + col;
 		for ( row=0; row<GL_PixelsY; row++ )
 		{
-			*((uint16_t *)_gl_cpCurrentFrameBuffer + row * GL_PixelsX + col) = GL_BLACK;
+			*pix_ptr = 0x0000;		// BLACK
+			pix_ptr += GL_PixelsX;
 		}
 		col = (col + 1) & (GL_PixelsX-1);
 #endif
@@ -318,12 +322,14 @@ void main_task(void *argument)
 		//   * set new boid pix
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);				// PB0 to time the drawing
 		DrawBoids();
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);				// PA12 to time the drawing
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);			// PB0 to time the drawing
 
 #if _TearTest
+		pix_ptr = (uint16_t *)_gl_cpCurrentFrameBuffer + col;
 		for ( row=0; row<GL_PixelsY; row++ )
 		{
-			*((uint16_t *)_gl_cpCurrentFrameBuffer + row * GL_PixelsX + col) = GL_WHITE;
+			*pix_ptr = 0xFFFF;		// WHITE
+			pix_ptr += GL_PixelsX;
 		}
 #endif
 
@@ -412,6 +418,22 @@ void timer_callback(void *argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+#if _TestBoids
+volatile bool LCD_TestDMADone;
+#endif
+void LCD_Callback( uint32_t arg )
+{
+	if ( arg == LCD_CallbackReason_DMAComplete )
+	{
+		#if _TestBoids
+		LCD_TestDMADone = 1;
+		#else
+		osEventFlagsSet( sync_eventHandle, EVENT_FLAG_LCD_DMA_COMPLETE );
+		#endif
+	}
+}
+
 void requestSPI(uint8_t fastSPI)
 {
 	// defaults to 'fast' (20Mbps) in .IOC file
@@ -756,6 +778,10 @@ void MoveBoids( void )
 volatile uint64_t totalTicks=0;
 volatile uint32_t minTicks=0xFFFFFFFFL, maxTicks=0L, avgmicro;
 
+#define _MaxTestLoops	100L		// 100k loops @ 6.5ms = ~11 minutes
+#define _LCDInTest		1
+
+
 uint32_t TestBoids( void )
 {
 	extern TIM_HandleTypeDef htim7;
@@ -767,18 +793,33 @@ uint32_t TestBoids( void )
 	htim7.Instance->CR1 &= ~1;
 	htim7.Instance->CNT = 0;
 
+#if _LCDInTest
+	requestSPI( 1 );
+
+	LCD_Init( LCD_Callback, _LCDDriver_SSD1351 );
+	_gl_iInitialize();
+	LCD_EnableUpdates();
+
+	releaseSPI();
+#endif
+
 	// don't let timer 1 run (1ms timer)
 	extern TIM_HandleTypeDef htim1;
 	htim1.Instance->CR1 &= ~1;
 
-//		InitBoids();
 
-#define _MaxTestLoops	100L		// 100k loops @ 6.5ms = ~11 minutes
 	uint32_t loops;
 	for ( loops=0; loops < _MaxTestLoops; loops++ )
 	{
 		InitBoids();
 
+#if _LCDInTest
+		LCD_TestDMADone = false;
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);				// PB3 to time the display
+		LCD_WriteFrameBuffer();
+#endif
+
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);				// PB0 to time the drawing
 		htim7.Instance->CNT = 0;
 		htim7.Instance->CR1 |= 1;
 
@@ -786,12 +827,18 @@ uint32_t TestBoids( void )
 
 		htim7.Instance->CR1 &= ~1;
 		uint32_t thisTicks = htim7.Instance->CNT;
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);				// PB0 to time the drawing
 
 		if ( thisTicks < minTicks )	minTicks = thisTicks;
 		if ( thisTicks > maxTicks ) maxTicks = thisTicks;
 		totalTicks += thisTicks;
 
-		DrawBoids();
+#if _LCDInTest
+		while ( !LCD_TestDMADone ) ;
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);				// PB3 to time the display
+		// force display update
+		LCD_SetBandMask( 0x1 );
+#endif
 	}
 	avgmicro = totalTicks / _MaxTestLoops;
 

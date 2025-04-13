@@ -5,7 +5,7 @@
   * Description        : Code for freertos applications
   ******************************************************************************
   * @attention
-  *m
+  *
   * Copyright (c) 2024 STMicroelectronics.
   * All rights reserved.
   *
@@ -80,9 +80,9 @@ typedef struct
 /* USER CODE BEGIN PD */
 extern RNG_HandleTypeDef hrng;
 
-#define _NumBoids	172
+#define _NumBoids	170
 #define _ShowStats	1
-
+#define _TestBoids2	0
 
 char TestResult[80];
 
@@ -214,8 +214,6 @@ void main_task(void *argument)
 {
   /* USER CODE BEGIN main_task */
 
-	InitBoids();
-
 	requestSPI( 1 );
 
 	LCD_Init( LCD_Callback, _LCDDriver_SSD1351 );
@@ -251,6 +249,8 @@ void main_task(void *argument)
 	osEventFlagsWait( sync_eventHandle, EVENT_FLAG_MAIN_TASK_TIMER_HIT, osFlagsWaitAll, osWaitForever );
 	osEventFlagsWait( sync_eventHandle, EVENT_FLAG_MAIN_TASK_TIMER_HIT, osFlagsWaitAll, osWaitForever );
 
+	InitBoids();
+
 	/* Infinite loop */
 	for(;;)
 	{
@@ -262,13 +262,16 @@ void main_task(void *argument)
 		}
 
 
-
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);				// PB3 to time the display
+		_GPIO_Pin_HI(GPIOB, GPIO_PIN_3);				// PB3 to time the display
 
 		LCD_WriteFrameBuffer();
 
+		_GPIO_Pin_HI(GPIOA, GPIO_PIN_12);			// PA12 to time the math
 
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_SET);			// PA12 to time the math
+#if _TestBoids2
+		TickType_t tb2t1 = osKernelGetTickCount();
+#endif
+
 		htim7.Instance->CNT = 0;
 		htim7.Instance->CR1 |= 1;
 
@@ -278,9 +281,12 @@ void main_task(void *argument)
 
 		htim7.Instance->CR1 &= ~1;
 		uint32_t elapsedMicroseconds = htim7.Instance->CNT;
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);			// PA12 to time the math
 
+#if _TestBoids2
+		TickType_t tb2t2 = osKernelGetTickCount();
+#endif
 
+		_GPIO_Pin_LO(GPIOA, GPIO_PIN_12);			// PA12 to time the math
 
 
 		// wait for frame buffer write to be done (DMA complete interrupt/event)
@@ -290,48 +296,23 @@ void main_task(void *argument)
 		}
 		while ( !(flags & EVENT_FLAG_LCD_DMA_COMPLETE) );
 
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);			// PB3 to time the display
+		_GPIO_Pin_LO(GPIOB, GPIO_PIN_3);			// PB3 to time the display
 
 
-
-#if 0
-		_gl_iSetColor( 0xFFFF );
-		_gl_iFilledRectangleXY(0,0,GL_PixelsX-1,GL_PixelsY-1);
-#else
+#if _ShowStats
 		// erase the stats text
 		_gl_iSetColor( GL_BLACK );
 		_gl_iFilledRectangleXY(0,0,GL_PixelsX-1,7);
 		_gl_iFilledRectangleXY(0,GL_PixelsY-8,GL_PixelsX-1,GL_PixelsY-1);
-
-#define _TearTest 0
-#if _TearTest
-		static uint8_t col=0;
-		uint8_t row;
-		uint16_t *pix_ptr = (uint16_t *)_gl_cpCurrentFrameBuffer + col;
-		for ( row=0; row<GL_PixelsY; row++ )
-		{
-			*pix_ptr = 0x0000;		// BLACK
-			pix_ptr += GL_PixelsX;
-		}
-		col = (col + 1) & (GL_PixelsX-1);
 #endif
 
 		// now that the display isn't busy (and won't be for about 1.8 milliseconds),
 		// go update the frame buffer:
 		//   * clear old boid pix
 		//   * set new boid pix
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);				// PB0 to time the drawing
+		_GPIO_Pin_HI(GPIOB, GPIO_PIN_0);				// PB0 to time the drawing
 		DrawBoids();
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);			// PB0 to time the drawing
-
-#if _TearTest
-		pix_ptr = (uint16_t *)_gl_cpCurrentFrameBuffer + col;
-		for ( row=0; row<GL_PixelsY; row++ )
-		{
-			*pix_ptr = 0xFFFF;		// WHITE
-			pix_ptr += GL_PixelsX;
-		}
-#endif
+		_GPIO_Pin_LO(GPIOB, GPIO_PIN_0);			// PB0 to time the drawing
 
 #if _ShowStats
 		// write some "math time" text
@@ -354,7 +335,11 @@ void main_task(void *argument)
 		strx = _gl_StringWidth( buff, &FONT_FixedSys_8x8 );
 		_gl_DrawString( (GL_PixelsX-strx), 0, buff, &FONT_FixedSys_8x8, GL_RED, GL_RED );
 
+#if _TestBoids2
+		sprintf( buff, "%3d", (uint8_t)(tb2t2 - tb2t1) );
+#else
 		sprintf( buff, "%3d", visible_boids );
+#endif
 		_gl_DrawString( 0, GL_PixelsY-8, buff, &FONT_FixedSys_8x8, GL_BLUE, GL_BLUE );
 
 		curTick = osKernelGetTickCount();
@@ -378,7 +363,6 @@ void main_task(void *argument)
 		}
 		_gl_DrawString( GL_PixelsX-80, GL_PixelsY-8, tbuff, &FONT_FixedSys_8x8, GL_BLUE, GL_BLUE );
 #endif
-#endif
 
 		GPIO_PinState btn3 = HAL_GPIO_ReadPin( BUTTON_1_GPIO_Port, BUTTON_1_Pin );
 		if ( display_on && display_timeout >= 60000 )
@@ -396,6 +380,10 @@ void main_task(void *argument)
 
 		// force display update
 		LCD_SetBandMask( 0x1 );
+
+#if _TestBoids2
+		InitBoids();
+#endif
 	}
 
 
@@ -412,7 +400,6 @@ void timer_callback(void *argument)
 	{
 		osEventFlagsSet( sync_eventHandle, EVENT_FLAG_MAIN_TASK_TIMER_HIT );
 	}
-
   /* USER CODE END timer_callback */
 }
 
@@ -506,12 +493,12 @@ void memmove_w( void *dst, void *src, uint16_t len )
 
 
 // initialized data (vs. const) so they're in fast(er) RAM instead of FLASH
-#if _TestBoids
+#if _TestBoids || _TestBoids2
 const float32_t margin = 1.0f;
-const float32_t attractrange = 1000.0f;
-const float32_t avoidrange = 0.0f;
-const float32_t maxspeed = -10000.0f;
-const float32_t minspeed = -10000.0f;
+const float32_t attractrange = 10000.0f;
+const float32_t avoidrange = 0.1f;
+const float32_t maxspeed = 0.00001f;
+const float32_t minspeed = 0.0001f;
 #else
 const float32_t margin = 100.0f;
 const uint32_t attractrange = 60;
@@ -606,33 +593,30 @@ void InitBoids( void )
 		boids[i].color = GL_WHITE;
 #endif
 
-#if _TestBoids
-		boids[i].vel_old.x = boids[i].vel_new.x = 0.0f;
-		boids[i].vel_old.y = boids[i].vel_new.y = 0.0f;
-		boids[i].pos_old.x = boids[i].pos_new.x = Window.y;// + (float32_t)i;
-		boids[i].pos_old.y = boids[i].pos_new.y = Window.y;// + (float32_t)i;
+#if _TestBoids || _TestBoids2
+		boids[i].vel_old.x = 1000.0f;
+		boids[i].vel_old.y = 1000.0f;
+		boids[i].pos_old.x = 400.0f + (float32_t)i;
+		boids[i].pos_old.y = 400.0f + (float32_t)i;
 #else
 		// first, give them all random positions within the Window area
 		float32_t random_x = ((float32_t)hrand() / (float32_t)RAND_MAX) * (Window.y - Window.x);
 		float32_t random_y = ((float32_t)hrand() / (float32_t)RAND_MAX) * (Window.y - Window.x);
-		boids[i].pos_new.x = Window.x + random_x;
-		boids[i].pos_new.y = Window.x + random_y;
-		boids[i].pos_old = boids[i].pos_new;
+		boids[i].pos_old.x = Window.x + random_x;
+		boids[i].pos_old.y = Window.x + random_y;
 		boids[i].disp.x = 128;
 
 		// now give them all random velocities
-		boids[i].vel_new.x = ((float32_t)hrand() / (float32_t)RAND_MAX) * (maxspeed - minspeed) + minspeed * ((hrand() % 2) ? 1.0f : -1.0f);
-		boids[i].vel_new.y = ((float32_t)hrand() / (float32_t)RAND_MAX) * (maxspeed - minspeed) + minspeed * ((hrand() % 2) ? 1.0f : -1.0f);
+		boids[i].vel_old.x = ((float32_t)hrand() / (float32_t)RAND_MAX) * (maxspeed - minspeed) + minspeed * ((hrand() % 2) ? 1.0f : -1.0f);
+		boids[i].vel_old.y = ((float32_t)hrand() / (float32_t)RAND_MAX) * (maxspeed - minspeed) + minspeed * ((hrand() % 2) ? 1.0f : -1.0f);
 		// make sure we're not going too fast
-		float32_t speed_squared = boids[i].vel_new.x * boids[i].vel_new.x + boids[i].vel_new.y * boids[i].vel_new.x;
-		float32_t speed;
-		vsqrt_f32( speed_squared, &speed );
+		float32_t speed_squared = boids[i].vel_old.x * boids[i].vel_old.x + boids[i].vel_old.y * boids[i].vel_old.x;
+		float32_t speed = sqrtf( speed_squared );
 		if ( speed > maxspeed )
 		{
-			boids[i].vel_new.x = (boids[i].vel_new.x / speed) * maxspeed;
-			boids[i].vel_new.y = (boids[i].vel_new.y / speed) * maxspeed;
+			boids[i].vel_old.x = (boids[i].vel_old.x / speed) * maxspeed;
+			boids[i].vel_old.y = (boids[i].vel_old.y / speed) * maxspeed;
 		}
-		boids[i].vel_old = boids[i].vel_new;
 #endif
 	}
 
@@ -815,11 +799,11 @@ uint32_t TestBoids( void )
 
 #if _LCDInTest
 		LCD_TestDMADone = false;
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);				// PB3 to time the display
+		_GPIO_Pin_HI(GPIOB, GPIO_PIN_3);				// PB3 to time the display
 		LCD_WriteFrameBuffer();
 #endif
 
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);				// PB0 to time the drawing
+		_GPIO_Pin_HI(GPIOB, GPIO_PIN_0);				// PB0 to time the drawing
 		htim7.Instance->CNT = 0;
 		htim7.Instance->CR1 |= 1;
 
@@ -827,7 +811,7 @@ uint32_t TestBoids( void )
 
 		htim7.Instance->CR1 &= ~1;
 		uint32_t thisTicks = htim7.Instance->CNT;
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);				// PB0 to time the drawing
+		_GPIO_Pin_LO(GPIOB, GPIO_PIN_0);				// PB0 to time the drawing
 
 		if ( thisTicks < minTicks )	minTicks = thisTicks;
 		if ( thisTicks > maxTicks ) maxTicks = thisTicks;
@@ -835,7 +819,7 @@ uint32_t TestBoids( void )
 
 #if _LCDInTest
 		while ( !LCD_TestDMADone ) ;
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);				// PB3 to time the display
+		_GPIO_Pin_LO(GPIOB, GPIO_PIN_3);				// PB3 to time the display
 		// force display update
 		LCD_SetBandMask( 0x1 );
 #endif

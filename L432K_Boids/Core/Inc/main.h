@@ -63,6 +63,10 @@ extern "C" {
 
 #define _TestBoids	0
 
+
+#define _GPIO_Pin_HI(port,pin)	((port)->BSRR=(pin))
+#define _GPIO_Pin_LO(port,pin)	((port)->BRR=(pin))
+
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/

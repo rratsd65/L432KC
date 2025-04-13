@@ -22,9 +22,6 @@
 extern SPI_HandleTypeDef hspi1;
 extern DMA_HandleTypeDef hdma_spi1_tx;
 
-#define _GPIO_Pin_HI(port,pin)	((port)->BSRR=(pin))
-#define _GPIO_Pin_LO(port,pin)	((port)->BRR=(pin))
-
 #define _LCD_Mode_Command	_GPIO_Pin_LO(LCD_DC_GPIO_Port,LCD_DC_Pin)
 #define _LCD_Mode_Data		_GPIO_Pin_HI(LCD_DC_GPIO_Port,LCD_DC_Pin)
 
